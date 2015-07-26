@@ -117,6 +117,7 @@
 	if ([operation isKindOfClass:[ASIHTTPRequest class]]) {
 		
 		ASIHTTPRequest *request = (ASIHTTPRequest *)operation;
+        //NOTES:关于head request，HEAD:- Used when the client is requesting some information about a resource but not requesting the resource itself.
 		[request setRequestMethod:@"HEAD"];
 		[request setQueuePriority:10];
 		[request setShowAccurateProgress:YES];

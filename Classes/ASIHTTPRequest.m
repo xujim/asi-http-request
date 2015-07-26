@@ -259,7 +259,7 @@ static NSOperationQueue *sharedQueue = nil;
 		persistentConnectionsPool = [[NSMutableArray alloc] init];
 		connectionsLock = [[NSRecursiveLock alloc] init];
 		progressLock = [[NSRecursiveLock alloc] init];
-		bandwidthThrottlingLock = [[NSLock alloc] init];
+		bandwidthThrottlingLock = [[NSLock alloc] init];//TODO:各种lock有何区别呢？
 		sessionCookiesLock = [[NSRecursiveLock alloc] init];
 		sessionCredentialsLock = [[NSRecursiveLock alloc] init];
 		delegateAuthenticationLock = [[NSRecursiveLock alloc] init];
@@ -269,7 +269,7 @@ static NSOperationQueue *sharedQueue = nil;
 		ASIRequestCancelledError = [[NSError alloc] initWithDomain:NetworkRequestErrorDomain code:ASIRequestCancelledErrorType userInfo:[NSDictionary dictionaryWithObjectsAndKeys:@"The request was cancelled",NSLocalizedDescriptionKey,nil]];
 		ASIUnableToCreateRequestError = [[NSError alloc] initWithDomain:NetworkRequestErrorDomain code:ASIUnableToCreateRequestErrorType userInfo:[NSDictionary dictionaryWithObjectsAndKeys:@"Unable to create request (bad url?)",NSLocalizedDescriptionKey,nil]];
 		ASITooMuchRedirectionError = [[NSError alloc] initWithDomain:NetworkRequestErrorDomain code:ASITooMuchRedirectionErrorType userInfo:[NSDictionary dictionaryWithObjectsAndKeys:@"The request failed because it redirected too many times",NSLocalizedDescriptionKey,nil]];
-		sharedQueue = [[NSOperationQueue alloc] init];
+		sharedQueue = [[NSOperationQueue alloc] init];//NOTES:sharedQueue用于并行request吗？
 		[sharedQueue setMaxConcurrentOperationCount:4];
 
 	}
@@ -279,7 +279,7 @@ static NSOperationQueue *sharedQueue = nil;
 - (id)initWithURL:(NSURL *)newURL
 {
 	self = [self init];
-	[self setRequestMethod:@"GET"];
+	[self setRequestMethod:@"GET"];//默认是GET
 
 	[self setRunLoopMode:NSDefaultRunLoopMode];
 	[self setShouldAttemptPersistentConnection:YES];
@@ -324,8 +324,8 @@ static NSOperationQueue *sharedQueue = nil;
 + (id)requestWithURL:(NSURL *)newURL usingCache:(id <ASICacheDelegate>)cache andCachePolicy:(ASICachePolicy)policy
 {
 	ASIHTTPRequest *request = [[[self alloc] initWithURL:newURL] autorelease];
-	[request setDownloadCache:cache];
-	[request setCachePolicy:policy];
+	[request setDownloadCache:cache];//cache是一个cache的handler
+	[request setCachePolicy:policy];//Cache Policy定义了若干中cache得策略
 	return request;
 }
 
@@ -402,6 +402,7 @@ static NSOperationQueue *sharedQueue = nil;
 }
 
 #if NS_BLOCKS_AVAILABLE
+//NOTES：这些block的执行都是在main thread上的吗？
 - (void)releaseBlocksOnMainThread
 {
 	NSMutableArray *blocks = [NSMutableArray array];
@@ -530,6 +531,7 @@ static NSOperationQueue *sharedQueue = nil;
 	} else {
 		if ([self shouldCompressRequestBody]) {
 			NSError *err = nil;
+            //TODO:postBody数据从哪里来的呢？见setupPostBody函数，其实就是个NSMutableData
 			NSData *compressedBody = [ASIDataCompressor compressData:[self postBody] error:&err];
 			if (err) {
 				[self failWithError:err];
@@ -687,7 +689,7 @@ static NSOperationQueue *sharedQueue = nil;
 	return q;
 }
 
-
+//TODO:这里的queue是用于干吗的？
 - (void)setQueue:(id)newQueue
 {
 	[[self cancelledLock] lock];
@@ -773,6 +775,7 @@ static NSOperationQueue *sharedQueue = nil;
 	return [[[NSString alloc] initWithBytes:[data bytes] length:[data length] encoding:[self responseEncoding]] autorelease];
 }
 
+//如此判断返回是否已经zip
 - (BOOL)isResponseCompressed
 {
 	NSString *encoding = [[self responseHeaders] objectForKey:@"Content-Encoding"];
@@ -791,6 +794,7 @@ static NSOperationQueue *sharedQueue = nil;
 
 #pragma mark running a request
 
+//NOTE: 直接调用，又是什么样的局面
 - (void)startSynchronous
 {
 #if DEBUG_REQUEST_STATUS || DEBUG_THROTTLING
@@ -801,18 +805,68 @@ static NSOperationQueue *sharedQueue = nil;
 	[self setInProgress:YES];
 
 	if (![self isCancelled] && ![self complete]) {
+        //NOTES：这里调用main来执行request逻辑，main是NSOperation需要override的一个函数
 		[self main];
-		while (!complete) {
-			[[NSRunLoop currentRunLoop] runMode:[self runLoopMode] beforeDate:[NSDate distantFuture]];
+/*
+        下来是Run Loop的使用场合：
+        1. 使用port或是自定义的input source来和其他线程进行通信
+        2. 在线程（非主线程）中使用timer
+        3. 使用 performSelector...系列（如performSelectorOnThread, ...）
+        4. 使用线程执行周期性工作
+        大家也可以看下下面的例子
+        while(done)
+        {
+            [ NSRunLoop currentRunLoop]  runMode:currentMode beforeDate:[NSDate dateWithTimeIntervalSinceNow:10]];
+        }
+        上面这段话看似程序进入了死循环，其实并不是这样。
+        这段程序的意思是：
+        如果当前线程有当前设置的runMode下的事件发生，runloop就会启动，处理对应的事件。如果没有事件发生，runloop就会每过10秒钟启动一次当前线程的runloop.
+        如果runloop每次启动成功   [ NSRunLoop currentRunLoop]  runMode:currentMode beforeDate:[NSDate dateWithTimeIntervalSinceNow:10]]; 返回值为YES，这个启动成功包括了时间触发和10秒钟到了之后触发两种情况。如果启动失败返回false.
+        说到这个地方可能还不明白，为什么要搞个循环，为什么要用runloop,我刚开始的时候也是搞得不太明白。
+        这个地方解释一下：
+        当我们在ios设备上面触摸屏幕之后，对应的tounch事件就会调用，这是为什么呢，其实这个地方就有runloop的功劳。
+        其实runloop做为一种时间处理机制，类似一个车间的主任（不知道这种比喻是否恰当）,这个主任他负责处理这个车间流水线上面发生特定类型事件的处理（这里的特定事件就是runMode）这个事件可以包括安全事件，机械时间等等。该主任处理时间的传统方式可以是每隔一分钟巡逻生产线一次(对应的是cpu空转轮询消息队列的方式)，这种方式比较耗费工人体力（cpu资源，电量），当发现有问题发生，他就找对应的工人去处理，这里的工人对应于时间的处理函数；还有一种方式就是主任平时都在睡觉打麻将，当生产线发生问题的时候，如果是属于他的职责，系统就直接给他发送一条短信通知他，他收到之后再通知对应的工人去处理，上面那个十秒钟(这个是可以更改的）就是如果十秒内没有消息通知过来，主任才会去车间巡逻一次，但是这十秒由于主任是没有收到事件处理消息的，所以他通常是到了车间就走了（对应runLoop启动就结束，没有事件处理）。因此采用runloop的好处就显而易见了。
+ */
+		while (!self.complete) {
+//            NOTES:当前线程未必是ui thread，如果是work thread，如何保证它已经有runloop了呢？如果setupRunloop就会生成runloop
+            //对于runLoopMode: Will be ASIHTTPRequestRunLoopMode for synchronous requests, NSDefaultRunLoopMode for all other requests
+            //这个函数会阻塞当前线程
+			[[NSRunLoop currentRunLoop] runMode:[self runLoopMode] beforeDate:[NSDate distantFuture]];//当前只监听runLoopMode对应的runloop source,[NSDate distantFuture]表示非常久的将来，此处Runs the loop once, blocking for input in the specified mode until a given date.也就是说runloop会block，直到[NSDate distantFuture]或者当前mode有事件可以处理才会返回
 		}
+        //NOTES:注意这个while循环,见下面解释：
+        /*你应该知道这样一段代码可以阻塞当前线程，你可能会奇怪：RunLoop就是不停循环来检测源的事件，为什么还要加个 while 呢？
+         这是因为RunLoop的特性，RunLoop会在没有“事件源”可监听时休眠。也就是说如果当前没有合适的“源”被RunLoop监听，那么这步就跳过了，不能起到阻塞线程的作用，所以还是要加个while循环来维持。
+         同时注意：因为这段代码可以阻塞线程，所以请不要在主线程写下这段代码，因为它很可能会导致界面卡住。*/
 	}
 
 	[self setInProgress:NO];
 }
 
+//NOTES:是NSOperation得成员函数，用于NSOperation的执行
+/*当实现了start方法时，默认会执行start方法，而不执行main方法
+ 为了让操作队列能够捕获到操作的改变，需要将状态的属性以配合 KVO 的方式进行实现。如果你不使用它们默认的 setter 来进行设置的话，你就需要在合适的时候发送合适的 KVO 消息。
+ 需要手动管理的状态有：
+ isExecuting 代表任务正在执行中
+ isFinished 代表任务已经执行完成
+ isCancelled 代表任务已经取消执行
+ 手动的发送 KVO 消息， 通知状态更改如下 ：
+ [self willChangeValueForKey:@"isCancelled"];
+ _isCancelled = YES;
+ [self didChangeValueForKey:@"isCancelled"];
+ 为了能使用操作队列所提供的取消功能，你需要在长时间操作中时不时地检查 isCancelled 属性, 比如在一个长的循环中:
+ @implementation MyOperation
+ 
+ - (void)main
+ {
+ while (notDone && !self.isCancelled) {
+ // 任务处理
+ }
+ }
+ @end*/
 - (void)start
 {
-	[self setInProgress:YES];
+	[self setInProgress:YES];//设置operation的状态
+    //最后调用main函数
 	[self performSelector:@selector(main) onThread:[[self class] threadForRequest:self] withObject:nil waitUntilDone:NO];
 }
 
@@ -842,7 +896,10 @@ static NSOperationQueue *sharedQueue = nil;
 
 #pragma mark request logic
 
+/*你可以使用系统提供的一些现成的 NSOperation 的子类， 如 NSBlockOperation、NSInvocationOperation 等（如上例子）。你也可以实现自己的子类， 通过重写 main 或者 start 方法 来定义自己的 operations 。
+ 使用 main 方法非常简单，开发者不需要管理一些状态属性（例如 isExecuting 和 isFinished），当 main 方法返回的时候，这个 operation 就结束了。这种方式使用起来非常简单，但是灵活性相对重写 start 来说要少一些， 因为main方法执行完就认为operation结束了，所以一般可以用来执行同步任务。*/
 // Create the request
+//NOTES: 注意这里实现了start，则不会默认调用main，而会调用start
 - (void)main
 {
 	@try {
@@ -890,7 +947,7 @@ static NSOperationQueue *sharedQueue = nil;
 		}
 		
 		if (![[self requestMethod] isEqualToString:@"GET"]) {
-			[self setDownloadCache:nil];
+			[self setDownloadCache:nil];//TODO:download cache只支持GET吗？
 		}
 		
 		
@@ -906,13 +963,14 @@ static NSOperationQueue *sharedQueue = nil;
 			return;
 		}
 
+        //TODO: ASINetworkQueue和mainrequst有什么关系？
 		//If this is a HEAD request generated by an ASINetworkQueue, we need to let the main request generate its headers first so we can use them
-		if ([self mainRequest]) {
+		if ([self mainRequest]) {//TODO: mainRequest是什么样的request，用于干嘛？
 			[[self mainRequest] buildRequestHeaders];
 		}
 		
 		// Even if this is a HEAD request with a mainRequest, we still need to call to give subclasses a chance to add their own to HEAD requests (ASIS3Request does this)
-		[self buildRequestHeaders];
+		[self buildRequestHeaders];//TODO: 这是为mainRequest设置头吗？明显不是，相反如果mainrequest已经设置了，则直接复制mainreqeust的头到当前的request的头中
 		
 		if ([self downloadCache]) {
 
@@ -952,9 +1010,10 @@ static NSOperationQueue *sharedQueue = nil;
 			CFHTTPMessageSetHeaderFieldValue(request, (CFStringRef)header, (CFStringRef)[[self requestHeaders] objectForKey:header]);
 		}
 
+        //TODO: startRequest和proxy有毛关系啊？为何要基于是否有proxy？
 		// If we immediately have access to proxy settings, start the request
 		// Otherwise, we'll start downloading the proxy PAC file, and call startRequest once that process is complete
-		if ([self configureProxies]) {
+		if ([self configureProxies]) {//NOTES：看configureProxies的函数实现，如果当前没有proxy的话则直接返回yes，然后调用startRequest
 			[self startRequest];
 		}
 
@@ -967,6 +1026,7 @@ static NSOperationQueue *sharedQueue = nil;
 	}
 }
 
+//TODO：http中auth得头具体是什么用处？如何使用？
 - (void)applyAuthorizationHeader
 {
 	// Do we want to send credentials before we are asked for them?
@@ -1173,6 +1233,7 @@ static NSOperationQueue *sharedQueue = nil;
 	// Do we need to stream the request body from disk
 	if ([self shouldStreamPostDataFromDisk] && [self postBodyFilePath] && [fileManager fileExistsAtPath:[self postBodyFilePath]]) {
 		
+        //NOTES:都是设置NSInputStream
 		// Are we gzipping the request body?
 		if ([self compressedPostBodyFilePath] && [fileManager fileExistsAtPath:[self compressedPostBodyFilePath]]) {
 			[self setPostBodyReadStream:[ASIInputStream inputStreamWithFileAtPath:[self compressedPostBodyFilePath] request:self]];
@@ -1227,6 +1288,7 @@ static NSOperationQueue *sharedQueue = nil;
             [sslProperties release];
         } 
         
+        //TODO:这个客户端认证从哪里冒出来的？
         // Tell CFNetwork to use a client certificate
         if (clientCertificateIdentity) {
             NSMutableDictionary *sslProperties = [NSMutableDictionary dictionaryWithCapacity:1];
@@ -1273,6 +1335,7 @@ static NSOperationQueue *sharedQueue = nil;
 		}
 		NSMutableDictionary *proxyToUse = [NSMutableDictionary dictionaryWithObjectsAndKeys:[self proxyHost],hostKey,[NSNumber numberWithInt:[self proxyPort]],portKey,nil];
 
+        //stream其实就已经是scoket得封装了，所以这里给stream设置proxy就相当于给socket设置
 		if ([[self proxyType] isEqualToString:(NSString *)kCFProxyTypeSOCKS]) {
 			CFReadStreamSetProperty((CFReadStreamRef)[self readStream], kCFStreamPropertySOCKSProxy, proxyToUse);
 		} else {
@@ -1338,7 +1401,7 @@ static NSOperationQueue *sharedQueue = nil;
 		}
 		
 		if ([[self connectionInfo] objectForKey:@"stream"]) {
-			oldStream = [[[self connectionInfo] objectForKey:@"stream"] retain];
+			oldStream = [[[self connectionInfo] objectForKey:@"stream"] retain];//重用之前的connection建立的stream
 
 		}
 		
@@ -1382,7 +1445,7 @@ static NSOperationQueue *sharedQueue = nil;
 
 	// Schedule the stream
 	if (![self readStreamIsScheduled] && (!throttleWakeUpTime || [throttleWakeUpTime timeIntervalSinceDate:[NSDate date]] < 0)) {
-		[self scheduleReadStream];
+        [self scheduleReadStream];//NOTES:这里会做什么事？真正开始scheduleInRunLoop
 	}
 	
 	BOOL streamSuccessfullyOpened = NO;
@@ -1943,6 +2006,7 @@ static NSOperationQueue *sharedQueue = nil;
 		startedBlock();
 	}
 	#endif
+    //NOTES: queue是network queues之类的
 	if (queue && [queue respondsToSelector:@selector(requestStarted:)]) {
 		[queue performSelector:@selector(requestStarted:) withObject:self];
 	}
@@ -3716,6 +3780,7 @@ static NSOperationQueue *sharedQueue = nil;
 		[self setLastActivityTime:[NSDate date]];
 		CFStreamClientContext ctxt = {0, self, NULL, NULL, NULL};
 		CFReadStreamSetClient((CFReadStreamRef)[self readStream], kNetworkEvents, ReadStreamClientCallBack, &ctxt);
+        //NOTES:scheduleInRunLoop将工作添加到runloop中
 		[[self readStream] scheduleInRunLoop:[NSRunLoop currentRunLoop] forMode:[self runLoopMode]];
 		[self setReadStreamIsScheduled:YES];
 	}
@@ -4780,6 +4845,7 @@ static NSOperationQueue *sharedQueue = nil;
 	if (networkThread == nil) {
 		@synchronized(self) {
 			if (networkThread == nil) {
+                //NOTES:生成子线程，并在子线程中生成runloop
 				networkThread = [[NSThread alloc] initWithTarget:self selector:@selector(runRequests) object:nil];
 				[networkThread start];
 			}
@@ -4790,6 +4856,7 @@ static NSOperationQueue *sharedQueue = nil;
 
 + (void)runRequests
 {
+//    NOTES:启用子线程的runloop,只有这个函数调用之后该子线程才有runloop功能
 	// Should keep the runloop from exiting
 	CFRunLoopSourceContext context = {0, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL};
 	CFRunLoopSourceRef source = CFRunLoopSourceCreate(kCFAllocatorDefault, 0, &context);

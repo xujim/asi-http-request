@@ -10,6 +10,25 @@
 #import "ASIHTTPRequestDelegate.h"
 #import "ASIProgressDelegate.h"
 
+/*为什么优先使用NSOperationQueue而不是GCD
+ 曾经我有一段时间我非常喜欢使用GCD来进行并发编程，因为虽然它是C的api，但是使用起来却非常简单和方便, 不过这样也就容易使开发者忘记并发编程中的许多注意事项和陷阱。
+ 比如你可能写过类似这样的代码(这样来请求网络数据)：
+ dispatch_async(_Queue, ^{
+     //请求数据
+     NSData *data = [NSData dataWithContentURL:[NSURL URLWithString:@"http://domain.com/a.png"]];
+     dispatch_async(dispatch_get_main_queue(), ^{
+         [self refreshViews:data];
+     });
+ });
+ 没错，它是可以正常的工作，但是有个致命的问题：这个任务是无法取消的 dataWithContentURL:是同步的拉取数据，它会一直阻塞线程直到完成请求，如果是遇到了超时的情况，它在这个时间内会一直占有这个线程；在这个期间并发队列就需要为其他任务新建线程，这样可能导致性能下降等问题。
+ 因此我们不推荐这种写法来从网络拉取数据。
+ 操作队列（operation queue）是由 GCD 提供的一个队列模型的 Cocoa 抽象。GCD 提供了更加底层的控制，而操作队列则在 GCD 之上实现了一些方便的功能，这些功能对于 app 的开发者来说通常是最好最安全的选择。NSOperationQueue相对于GCD来说有以下优点：
+ 1,提供了在 GCD 中不那么容易复制的有用特性。
+ 2,可以很方便的取消一个NSOperation的执行
+ 3,可以更容易的添加任务的依赖关系
+ 4,提供了任务的状态：isExecuteing, isFinished.
+ 注：本文中提到的 “任务”， “操作” 即代表要再NSOperation中执行的事情。*/
+
 @interface ASINetworkQueue : NSOperationQueue <ASIProgressDelegate, ASIHTTPRequestDelegate, NSCopying> {
 	
 	// Delegate will get didFail + didFinish messages (if set)

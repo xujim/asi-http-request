@@ -49,6 +49,7 @@ typedef enum _ASIAuthenticationState {
 	ASIProxyAuthenticationNeeded = 2
 } ASIAuthenticationState;
 
+//错误类型
 typedef enum _ASINetworkErrorType {
     ASIConnectionFailureErrorType = 1,
     ASIRequestTimedOutErrorType = 2,
@@ -71,7 +72,7 @@ extern NSString* const NetworkRequestErrorDomain;
 // You can use this number to throttle upload and download bandwidth in iPhone OS apps send or receive a large amount of data
 // This may help apps that might otherwise be rejected for inclusion into the app store for using excessive bandwidth
 // This number is not official, as far as I know there is no officially documented bandwidth limit
-extern unsigned long const ASIWWANBandwidthThrottleAmount;
+extern unsigned long const ASIWWANBandwidthThrottleAmount;//Throttle是节流的意思，这里指限制带宽,TODO:如何限制带宽呢？
 
 #if NS_BLOCKS_AVAILABLE
 typedef void (^ASIBasicBlock)(void);
@@ -98,7 +99,7 @@ typedef void (^ASIDataBlock)(NSData *data);
 	// Another delegate that is also notified of request status changes and progress updates
 	// Generally, you won't use this directly, but ASINetworkQueue sets itself as the queue so it can proxy updates to its own delegates
 	// NOTE: WILL BE RETAINED BY THE REQUEST
-	id <ASIHTTPRequestDelegate, ASIProgressDelegate> queue;
+	id <ASIHTTPRequestDelegate, ASIProgressDelegate> queue;//NOTES:queue是ASINetworkQueue之类的
 	
 	// HTTP method to use (eg: GET / POST / PUT / DELETE / HEAD etc). Defaults to GET
 	NSString *requestMethod;
@@ -138,8 +139,13 @@ typedef void (^ASIDataBlock)(NSData *data);
 	// Will be populated with HTTP response headers from the server
 	NSDictionary *responseHeaders;
 	
+//    在网络上，临时cookie为用户浏览器关闭时消失的含有用户有关信息的小文件，有时也称通话cookie。跟永久cookie不一样，临时cookie不保存在硬盘驱动器而是存在
+//    临时存储器中，当浏览器关闭时，将被删除。
+//    当应用程序创建cookie时，在设置Cookie选择项中不设置日期就可以创建临时cookie。（对于永久cookie，设置了截止日期，cookie保存在用户硬盘驱动器，直到截
+//    止日期或者用户的删除）。
+//    临时cookie常常用于允许返回用户已经访问过的网站，从而可在一定程度用户化信息。有些网站使用加密套接字协议层（SSL）来加密cookie携带的信息。
 	// Can be used to manually insert cookie headers to a request, but it's more likely that sessionCookies will do this for you
-	NSMutableArray *requestCookies;
+	NSMutableArray *requestCookies;//sessionCookies和这里的cookie有何区别，什么是sessionCookies
 	
 	// Will be populated with cookies
 	NSArray *responseCookies;
